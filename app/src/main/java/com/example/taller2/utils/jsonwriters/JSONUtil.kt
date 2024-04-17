@@ -4,13 +4,16 @@ import android.content.Context
 import android.util.Log
 import org.json.JSONArray
 import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
+import java.io.FileWriter
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.io.Writer
 
 
 class JSONUtil {
@@ -26,40 +29,20 @@ class JSONUtil {
         }
 
         private fun readFromFile(filename: String, directory: File): String {
-            var ret = ""
-            var inputStream: InputStream? = null
-            try {
-                inputStream = File(directory, filename).inputStream()
-                if (inputStream != null) {
-                    val inputStreamReader = InputStreamReader(inputStream)
-                    val bufferedReader = BufferedReader(inputStreamReader)
-                    var receiveString: String? = ""
-                    val stringBuilder = StringBuilder()
-                    while (bufferedReader.readLine().also { receiveString = it } != null) {
-                        stringBuilder.append(receiveString)
-                    }
-                    ret = stringBuilder.toString()
-                }
-            } catch (e: FileNotFoundException) {
-                Log.e("login activity", "File not found: $e")
-            } catch (e: IOException) {
-                Log.e("login activity", "Can not read file: $e")
-            } finally {
-                try {
-                    inputStream!!.close()
-                } catch (e: IOException) {
-                    e.printStackTrace()
-                }
+            val file = File(directory, filename)
+            if (!file.exists()) {
+                return "[]"
             }
-            return ret
+            return file.readText()
         }
 
         private fun writeToFile(data: String, filename: String, directory: File) {
+            var output : Writer?
             try {
-                val outputStreamWriter =
-                    OutputStreamWriter(File(directory, filename).outputStream())
-                outputStreamWriter.write(data)
-                outputStreamWriter.close()
+                val file = File(directory, filename)
+                output = BufferedWriter(FileWriter(file))
+                output.write(data)
+                output.close()
             } catch (e: IOException) {
                 Log.e("Exception", "File write failed: $e")
             }

@@ -12,6 +12,7 @@ class Permissions {
     companion object {
         const val MY_PERMISSION_REQUEST_READ_CONTACTS : Int = 0
         const val MY_PERMISSION_REQUEST_CAMERA : Int = 1
+        const val REQUEST_LOCATION_PERMISSION : Int = 2
 
         fun requestPermission(
             context: Activity,

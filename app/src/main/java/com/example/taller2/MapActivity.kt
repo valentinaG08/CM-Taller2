@@ -8,6 +8,11 @@ import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import android.Manifest
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.widget.Toast
 
 import androidx.core.app.ActivityCompat
@@ -22,20 +27,41 @@ import org.osmdroid.library.BuildConfig
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import android.os.Environment
+import android.view.inputmethod.EditorInfo
+import com.example.taller2.utils.Permissions
+import com.example.taller2.utils.data.MyLocation
+import com.example.taller2.utils.jsonwriters.JSONUtil
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationSettingsRequest
+import com.google.android.gms.location.LocationSettingsResponse
+import com.google.android.gms.location.Priority
+import com.google.android.gms.location.SettingsClient
+import com.google.android.gms.tasks.Task
 import org.json.JSONArray
-import org.json.JSONException
-import org.json.JSONObject
-import java.io.File
-import java.io.FileWriter
+import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.TilesOverlay
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import kotlin.math.roundToInt
 
 class MapActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMapBinding
     private lateinit var mapController: IMapController
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var lastKnownLocation: Location? = null
+    private lateinit var mLocationRequest: LocationRequest
+    private lateinit var mLocationCallback: LocationCallback
+
+    private var localizaciones : JSONArray = JSONArray()
+    private var locationMarker : Marker? = null
+    private var longPressedMarker: Marker? = null
+
+    private lateinit var sensorManager: SensorManager
+    private lateinit var lightSensor : Sensor
+    private lateinit var lightSensorListener: SensorEventListener
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +69,30 @@ class MapActivity : AppCompatActivity() {
 
         binding = ActivityMapBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Lunminosidad
+
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)!!
+
+
+        lightSensorListener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent?) {
+                if (binding.osmMapPlace != null) {
+                    if (event?.values!![0] < 5000) {
+                        Log.i("MAPA OSCURO", "ENABLED")
+                        binding.osmMapPlace.overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
+                    } else {
+                        Log.i("MAPA CLARO", "ENABLED")
+                        binding.osmMapPlace.overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
+                    }
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+        }
+
 
         // Inicialización del cliente de ubicación
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
@@ -54,6 +104,114 @@ class MapActivity : AppCompatActivity() {
 
         // Obtener la ubicación del usuario y centrar el mapa en esa ubicación
         getUserLocation()
+
+        mLocationRequest = createLocationRequest()
+
+        mLocationCallback = object : LocationCallback() {
+            override fun onLocationResult(p0: LocationResult) {
+                val location = p0.lastLocation
+                Log.i("UBICACION", location.toString())
+
+                if (location != null) {
+                    lastKnownLocation.let {
+                        if (lastKnownLocation?.distanceTo(location)!! > 30) {
+                            writeLocation(location)
+                            createMarkerUser(location.latitude, location.longitude, "Usted esta aqui", "Su ubicacion")
+                        }
+                    }
+                }
+            }
+        }
+
+        checkLocationSettings()
+
+        binding.osmMapPlace.overlays.add(createOverlayEvents())
+
+        binding.buscador.setOnEditorActionListener { v, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                val addressString = binding.buscador.text.toString()
+                if (addressString.isNotEmpty()) {
+                    val mGeocoder = Geocoder(baseContext)
+                    try {
+                        val addresses = mGeocoder.getFromLocationName(addressString, 1)
+                        if (!addresses.isNullOrEmpty()) {
+                            val pos = addresses[0]
+                            createMarkerUser(pos.latitude, pos.longitude, pos.featureName, pos.countryName)
+                        } else {
+                            Toast.makeText(baseContext, "No existe esa ubicacion", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: IOException) {
+                        Log.i("Jum", "Jum")
+                    }
+                }
+            }
+
+            return@setOnEditorActionListener true
+        }
+    }
+
+    private fun createOverlayEvents(): MapEventsOverlay {
+        val overlayEventos = MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                return false
+            }
+            override fun longPressHelper(p: GeoPoint): Boolean {
+                longPressOnMap(p)
+                return true
+            }
+        })
+        return overlayEventos
+    }
+
+    private fun longPressOnMap(p: GeoPoint) {
+
+        val geoCoder = Geocoder(baseContext)
+
+        if (lastKnownLocation != null) {
+            Toast.makeText(baseContext, "La distancia es de ${distance(lastKnownLocation!!.latitude, lastKnownLocation!!.longitude, p.latitude, p.longitude)}", Toast.LENGTH_SHORT).show()
+        }
+
+        val results = geoCoder.getFromLocation(p.latitude, p.longitude, 1)
+
+        longPressedMarker = createMarkerUser(p.latitude, p.longitude, results!![0].featureName, results[0].countryName)
+    }
+
+
+    private fun createMarkerUser(lat: Double, lng: Double, title: String, desc: String): Marker {
+        locationMarker?.let { binding.osmMapPlace.overlays.remove(it) }
+        mapController.setZoom(18.0)
+        mapController.setCenter(GeoPoint(lat, lng))
+        val marker = Marker(binding.osmMapPlace)
+        marker.title = title
+        marker.position = GeoPoint(lat, lng)
+        marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+        marker.subDescription = desc
+        marker.textLabelForegroundColor = androidx.appcompat.R.color.material_blue_grey_800
+        binding.osmMapPlace.overlays.add(marker)
+        locationMarker = marker
+        return marker
+    }
+
+    private fun writeLocation(loc: Location) {
+        localizaciones = JSONUtil.readJsonFromFile("locations.json", baseContext.getExternalFilesDir(null)!!)
+
+        Log.i("JSON", localizaciones.toString())
+
+        localizaciones.put(
+            MyLocation(Date(System.currentTimeMillis()), loc.latitude, loc.longitude)
+                .toJSON()
+        )
+        JSONUtil.writeJSON("locations.json", localizaciones ,baseContext.getExternalFilesDir(null)!!)
+    }
+    private fun checkLocationSettings() {
+        val builder = LocationSettingsRequest.Builder().addLocationRequest(mLocationRequest)
+        val client : SettingsClient = LocationServices.getSettingsClient(this)
+        val task : Task<LocationSettingsResponse> = client.checkLocationSettings(builder.build())
+
+        task.addOnSuccessListener {
+            Log.i("LOCATION", "IS ON")
+            startLocationUpdates()
+        }
     }
 
     private fun getUserLocation() {
@@ -72,82 +230,34 @@ class MapActivity : AppCompatActivity() {
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 ),
-                REQUEST_LOCATION_PERMISSION
+                Permissions.REQUEST_LOCATION_PERMISSION
             )
+
             return
         }
 
         // Se tienen los permisos, obtener la ubicación actual del usuario
         fusedLocationClient.lastLocation
-            .addOnSuccessListener { location: Location? ->
+            .addOnSuccessListener(this) { location: Location? ->
                 // Got last known location. In some rare situations this can be null.
+
+                Log.i("LOCATION", location.toString())
                 if (location != null) {
-                    // Se obtiene la ubicación actual del usuario
+
                     val latitude = location.latitude
                     val longitude = location.longitude
 
-                    // Si hay una ubicación previa, comprobar el movimiento
-                    lastKnownLocation?.let { lastLocation ->
-                        val distanceMoved = location.distanceTo(lastLocation)
-                        if (distanceMoved > 30) {
-                            // Registrar el movimiento en el archivo JSON
-                            registerMovement(location)
-                        }
-                    }
 
-                    // Crear un GeoPoint con la ubicación del usuario
                     val userGeoPoint = GeoPoint(latitude, longitude)
-                    // Centrar el mapa en la ubicación del usuario
-                    mapController.setCenter(userGeoPoint)
+
+                    createMarkerUser(userGeoPoint.latitude, userGeoPoint.longitude, "Usted esta aqui", "Su Ubicacion")
+
                     // Actualizar la última ubicación conocida
                     lastKnownLocation = location
                 }
             }
     }
 
-    private fun registerMovement(location: Location) {
-        // Obtener la fecha y la hora actual
-        val currentDateTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-
-        // Crear un objeto JSON con los datos de ubicación y tiempo
-        val locationData = JSONObject()
-        try {
-            locationData.put("latitude", location.latitude)
-            locationData.put("longitude", location.longitude)
-            locationData.put("datetime", currentDateTime)
-        } catch (e: JSONException) {
-            e.printStackTrace()
-        }
-
-        // Obtener el directorio de almacenamiento externo
-        val externalStorageDir = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-
-        // Crear un archivo JSON en el directorio de documentos
-        val file = File(externalStorageDir, "movement_records.json")
-        try {
-            // Leer el contenido del archivo JSON actual
-            val jsonArray = if (file.exists()) {
-                val jsonString = file.readText()
-                JSONArray(jsonString)
-            } else {
-                JSONArray()
-            }
-
-            // Agregar el nuevo registro al arreglo JSON
-            jsonArray.put(locationData)
-
-            // Escribir el nuevo contenido al archivo JSON
-            val fileWriter = FileWriter(file)
-            fileWriter.write(jsonArray.toString())
-            fileWriter.close()
-
-            // Mostrar un mensaje de registro exitoso
-            Toast.makeText(this, "Registro de movimiento exitoso", Toast.LENGTH_SHORT).show()
-        } catch (e: IOException) {
-            e.printStackTrace()
-            Toast.makeText(this, "Error al registrar movimiento", Toast.LENGTH_SHORT).show()
-        }
-    }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -156,29 +266,53 @@ class MapActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
-            0 -> {
+            Permissions.REQUEST_LOCATION_PERMISSION -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Gracias", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Permiso negado", Toast.LENGTH_SHORT).show()
-                }
-                return
-            }
-            1 -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Permiso de localizacion", Toast.LENGTH_SHORT).show()
                     getUserLocation()
-                } else {
-                    Toast.makeText(this, "Funcionalidades reducidas", Toast.LENGTH_SHORT).show()
                 }
             }
-            else -> {
-                // Ignorar todos los demas permisos
-            }
+        }
+
+    }
+
+    private fun createLocationRequest() : LocationRequest {
+        return LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000).apply {
+            setMinUpdateIntervalMillis(5000)
+        }.build()
+    }
+
+    private fun startLocationUpdates() {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            fusedLocationClient.requestLocationUpdates(mLocationRequest, mLocationCallback, null)
         }
     }
 
-    companion object {
-        private const val REQUEST_LOCATION_PERMISSION = 1
+    private fun stopLocationUpdates() {
+        fusedLocationClient.removeLocationUpdates(mLocationCallback)
     }
+
+    override fun onPause() {
+        super.onPause()
+        stopLocationUpdates()
+    }
+
+    private fun distance(lat1: Double, long1: Double, lat2: Double, long2: Double): Double {
+        val RADIUS_OF_EARTH_KM : Double = 6371.01
+        val latDistance = Math.toRadians(lat1 - lat2)
+        val lngDistance = Math.toRadians(long1 - long2)
+        val a = (Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lngDistance / 2) * Math.sin(lngDistance / 2))
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        val result = RADIUS_OF_EARTH_KM * c
+        return (result * 100.0).roundToInt() / 100.0
+    }
+
 }
