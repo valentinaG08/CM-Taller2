@@ -8,8 +8,10 @@ import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import android.Manifest
+import android.widget.Toast
 
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.example.taller2.databinding.ActivityMapBinding
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
@@ -19,13 +21,21 @@ import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.library.BuildConfig
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.overlay.MapEventsOverlay
-import org.osmdroid.views.overlay.Marker
+import android.os.Environment
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
+import java.io.File
+import java.io.FileWriter
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MapActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMapBinding
     private lateinit var mapController: IMapController
     private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var lastKnownLocation: Location? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,29 +85,97 @@ class MapActivity : AppCompatActivity() {
                     // Se obtiene la ubicación actual del usuario
                     val latitude = location.latitude
                     val longitude = location.longitude
+
+                    // Si hay una ubicación previa, comprobar el movimiento
+                    lastKnownLocation?.let { lastLocation ->
+                        val distanceMoved = location.distanceTo(lastLocation)
+                        if (distanceMoved > 30) {
+                            // Registrar el movimiento en el archivo JSON
+                            registerMovement(location)
+                        }
+                    }
+
                     // Crear un GeoPoint con la ubicación del usuario
                     val userGeoPoint = GeoPoint(latitude, longitude)
                     // Centrar el mapa en la ubicación del usuario
-                    mapController.setZoom(18.0)
                     mapController.setCenter(userGeoPoint)
-                    // Aquí puedes hacer lo que necesites con el GeoPoint, como mostrarlo en el mapa
-                    val userMarker = createMarker(userGeoPoint, "Tu ubicación", null, 0)
-                    binding.osmMapPlace.overlays.add(userMarker)
+                    // Actualizar la última ubicación conocida
+                    lastKnownLocation = location
                 }
             }
     }
 
-    private fun createMarker(p: GeoPoint, title: String?, desc: String?, iconID: Int): Marker {
-        val marker = Marker(binding.osmMapPlace)
-        title?.let { marker.title = it }
-        desc?.let { marker.subDescription = it }
-        if (iconID != 0) {
-            val myIcon = resources.getDrawable(iconID, this.theme)
-            marker.icon = myIcon
+    private fun registerMovement(location: Location) {
+        // Obtener la fecha y la hora actual
+        val currentDateTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+
+        // Crear un objeto JSON con los datos de ubicación y tiempo
+        val locationData = JSONObject()
+        try {
+            locationData.put("latitude", location.latitude)
+            locationData.put("longitude", location.longitude)
+            locationData.put("datetime", currentDateTime)
+        } catch (e: JSONException) {
+            e.printStackTrace()
         }
-        marker.position = p
-        marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-        return marker
+
+        // Obtener el directorio de almacenamiento externo
+        val externalStorageDir = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+
+        // Crear un archivo JSON en el directorio de documentos
+        val file = File(externalStorageDir, "movement_records.json")
+        try {
+            // Leer el contenido del archivo JSON actual
+            val jsonArray = if (file.exists()) {
+                val jsonString = file.readText()
+                JSONArray(jsonString)
+            } else {
+                JSONArray()
+            }
+
+            // Agregar el nuevo registro al arreglo JSON
+            jsonArray.put(locationData)
+
+            // Escribir el nuevo contenido al archivo JSON
+            val fileWriter = FileWriter(file)
+            fileWriter.write(jsonArray.toString())
+            fileWriter.close()
+
+            // Mostrar un mensaje de registro exitoso
+            Toast.makeText(this, "Registro de movimiento exitoso", Toast.LENGTH_SHORT).show()
+        } catch (e: IOException) {
+            e.printStackTrace()
+            Toast.makeText(this, "Error al registrar movimiento", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            0 -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Toast.makeText(this, "Gracias", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Permiso negado", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+            1 -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Toast.makeText(this, "Permiso de localizacion", Toast.LENGTH_SHORT).show()
+                    getUserLocation()
+                } else {
+                    Toast.makeText(this, "Funcionalidades reducidas", Toast.LENGTH_SHORT).show()
+                }
+            }
+            else -> {
+                // Ignorar todos los demas permisos
+            }
+        }
     }
 
     companion object {
