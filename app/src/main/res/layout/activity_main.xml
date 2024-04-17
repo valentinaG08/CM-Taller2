@@ -1,0 +1,35 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical">
+
+    <ImageButton
+        android:id="@+id/btnContacts"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:onClick="openContactsActivity"
+        android:src="@drawable/contacts"
+        android:layout_marginBottom="20dp"/>
+
+    <ImageButton
+        android:id="@+id/btnGallery"
+        android:layout_width="240dp"
+        android:layout_height="210dp"
+        android:layout_gravity="center"
+        android:onClick="openGalleryActivity"
+        android:src="@drawable/camera"
+        android:layout_marginBottom="20dp"/>
+
+    <ImageButton
+        android:id="@+id/btnMaps"
+        android:layout_width="240dp"
+        android:layout_height="220dp"
+        android:layout_gravity="center"
+        android:src="@drawable/osmap"
+        android:onClick="openMapActivity"
+        android:layout_marginBottom="20dp"/>
+
+</LinearLayout>
